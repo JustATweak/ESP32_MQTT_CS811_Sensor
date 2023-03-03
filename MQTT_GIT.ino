@@ -1,55 +1,53 @@
 //////////Includes/////////////
 
 // WiFi connection
-#include <WiFi.h>
-// MQTT CLient
-#include <PubSubClient.h>
-// Temp / Humi Sensor DHT22
-#include <DHT.h>
-// JSON to send data via MQTT
-#include <ArduinoJson.h>
-// NTP client for current time / timestamp
-#include <NTPClient.h>
 
+#include <ESP8266WiFi.h>
+
+// MQTT CLient
+
+#include <PubSubClient.h>
+
+// CS811 Sensor
+
+#include <Wire.h>    // I2C library
+#include "ccs811.h"  // CCS811 library
+
+// Wiring for ESP8266 NodeMCU boards: VDD to 3V3, GND to GND, SDA to D2, SCL to D1, nWAKE to D3 (or GND)
+CCS811 ccs811(D3); // nWAKE on D3
+
+// JSON to send data via MQTT
+
+#include <ArduinoJson.h>
 
 //////////Variables/////////////
 
 // WiFi credentials
-const char* ssid     = "SSID";
-const char* password = "SuperSafePassword";
+const char* ssid     = "*YourSSID*";
+const char* password = "*YourWIFIPassword*";
 
 // MQTT Client broker and credentials
-const char* mqttBroker = "x.x.x.x";
+const char* mqttBroker = "*YourMQTTBrokerIP*";
 const int mqttPort = 1883;
-const char* mqttUser = "yourMQTTuser";
-const char* mqttPassword = "yourMQTTpassword";
-const char* sensor = "SENSOR_NAME";
-const char* mqttPublishTopic = "SENSOR_NAME/sensor";
+const char* mqttUser = "*YourMQTTUser";
+const char* mqttPassword = "*YourMQTTPassword*";
+const char* sensor = "*YourSensorName";
+const char* mqttPublishTopic = "*YourMQTTTopic*";
 
 // Example MQTT Json message
-const char* exampleMQTT = "{\"sensor\":\"esp32_01\",\"time\":1561925850,\"data\":[58.3,29.4,3.3]}";
+const char* exampleMQTT = "{\"sensor\":\"esp32_01\",data\":[58.3,29.4,3.3],data\":[58.3,29.4,3.3]}";
 // Calculate needed JSON document bytes with example message
 const size_t CAPACITY = JSON_OBJECT_SIZE(sizeof(exampleMQTT) + 20); 
 
 // DHT22 sensor type and which gpio pin is used for sensor data
-#define DHTPIN 27 
-#define DHTTYPE DHT22
+// #define DHTPIN 27 
+// #define DHTTYPE DHT22
 
-// DEEP Sleep settings
-#define TIME_TO_SLEEP  3600000000        /* Time ESP32 will go to sleep (in micro seconds) */
 
-//////////Objects/////////////
 
 // Creates WiFi instance and passes it on as a parameter for the MQTT client object
 WiFiClient espClient;
 PubSubClient client(espClient);
-
-// Creats sensor instance
-DHT dht(DHTPIN, DHTTYPE);
-
-// Creates WiFi UDP instance and passes it on as a parameter for the NTP client object
-WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "ntp2.fau.de", 7200);
 
 
 //////////Functions/////////////
@@ -112,67 +110,66 @@ void setup()
     Serial.begin(115200);
     delay(10);
 
-    // Enable sleep timer
-    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP);
-
-    // Sleep config: disables additional components which aren't necessary to safe energy
-    esp_sleep_pd_config(ESP_PD_DOMAIN_MAX, ESP_PD_OPTION_OFF);
-    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
-    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_OFF);
-    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_FAST_MEM, ESP_PD_OPTION_OFF);
-    Serial.println("Configured all RTC Peripherals to be powered down in sleep");
-    
-    // Initializes DHT22 sensor
-    dht.begin();
-    
     // Calls function to set up WiFi connection
-    setupWiFi();
-    
-    // Initializes NTP client
-    timeClient.begin();
+     setupWiFi();
     
     // Calls function to set up MQTT connection
-    setupMqtt();  
+     setupMqtt();  
 
-    // Check if time is up to date
-    if (timeClient.update()){
-        Serial.println("STATUS: Time up to date");
-    }else{
-        //Update time
-        while(!timeClient.update()) {
-        Serial.print("#NTP#");
-        delay(10000);
-        }
-    }
+    // Read the Values once and make sure the sensor works.
 
-    // Requests humidity data from DHT22 sensor
-    float h = dht.readHumidity();
-    // Requests temperature data in Celsius from DHT22 sensor
-    float t = dht.readTemperature();
+  // Enable I2C
+  Wire.begin(); 
+  
+  // Enable CCS811
+  ccs811.set_i2cdelay(50); // Needed for ESP8266 because it doesn't handle I2C clock stretch correctly
+  bool ok= ccs811.begin();
+  if( !ok ) Serial.println("setup: CCS811 begin FAILED");
+
+  // Print CCS811 versions
+  Serial.print("setup: hardware    version: "); Serial.println(ccs811.hardware_version(),HEX);
+  Serial.print("setup: bootloader  version: "); Serial.println(ccs811.bootloader_version(),HEX);
+  Serial.print("setup: application version: "); Serial.println(ccs811.application_version(),HEX);
+  
+  // Start measuring
+  ok= ccs811.start(CCS811_MODE_1SEC);
+  if( !ok ) Serial.println("setup: CCS811 start FAILED");
+
+}
+
+// After the intial Setup the loop delivers the measured values regular to the MQTT Server.
+
+void loop()
     
-    // Check if any reads failed and exit early (to try again).
-    if (isnan(h) || isnan(t)) {
-        Serial.println("STATUS: Failed to read from DHT sensor!");
-        float h = 0.0;
-        float t = 0.0;
-    }
+{
 
-    // Battery is connected to PIN35. Reads voltage and convert it to a readable value. (Is able to read between 0 and 3.3V. 0 = 0 / 3.3 = 4095)
-    float voltage = analogRead(35)*(3.3/4095);
-    if (voltage > 0.0){
-      voltage = (float)((int)(voltage*100))/100;
-    }
+  // Read values from the CS811 Sensor
+  uint16_t eco2, etvoc, errstat, raw;
+  ccs811.read(&eco2,&etvoc,&errstat,&raw); 
 
-    // Creates JSON document with capacity from example message. Contains sensor name, timestamp and data. 
+
+// Log the read values also to serial
+    
+    Serial.print("CCS811: ");
+    Serial.print("eco2=");  Serial.print(eco2);     Serial.print(" ppm  ");
+    Serial.print("etvoc="); Serial.print(etvoc);    Serial.print(" ppb  ");
+
+    // Assign the read values to the variable.
+    
+    float veco2 = eco2;
+    float vetvoc = etvoc;
+
+    // Creates JSON document with capacity from example message. Contains sensor name and data. 
+    
     StaticJsonDocument<CAPACITY> doc;
     doc["sensor"] = sensor;
-    doc["time"] = timeClient.getEpochTime();
-    doc["hum"] = h;
-    doc["temp"] = t;
-    doc["volt"] = voltage;
+    doc["eco2"] = veco2;
+    doc["etvoc"] = vetvoc;
     
     // Serialize JSON doc to char buffer with variable capacity (MQTT client needs char / char*)
+    
     char JSONmessageBuffer[CAPACITY];
+    
     //serializeJson(doc, Serial);
     serializeJson(doc, JSONmessageBuffer);
     
@@ -187,17 +184,10 @@ void setup()
     Serial.println("STATUS: Sent data via MQTT");
     doc = NULL;
 
-    Serial.println("Going to sleep now");
-    delay(1000);
+
     Serial.flush();
-    // Starts deep sleep. Hope we'll se us again.
-    esp_deep_sleep_start();
-    Serial.println("This will never be printed");
 
-}
+  // Wait
+  delay(20000); 
 
-// Runs in a loop / Will not be reached in deep sleep scenario 
-void loop()
-{
-    
 }
