@@ -10,4 +10,8 @@ Make sure the Sensor is wired in the follwing way:
 Sensor --- ESP32 (NodeMCU)
 GND --- GND, VCC --- 3V, SDA --- D2, SCL --- D1, WAKE --- GND
 
+Important Information about the CS811 Sensor:
+
+Although the readings tend to be good enough in the long run, introducing non-respiration sources of VOC or CO2, such as peeling fruits or using perfume, hand disinfactant, will undermine their reliability. (https://en.wikipedia.org/wiki/Carbon_dioxide_sensor)
+
 
