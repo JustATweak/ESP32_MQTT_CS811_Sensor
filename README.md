@@ -2,7 +2,8 @@
 
 ESP32 nodeMCU connects to WiFi and MQTT broker, sends sensor data in JSON format via MQTT.
 
-To connect the sensor the follwoing library is used for the NodeMCU https://github.com/maarten-pennings/CCS811
+Forked from https://github.com/JonasMock/ESP32_MQTT_DHT22_Sensor .
+To connect the sensor the follwoing library is used for the NodeMCU https://github.com/maarten-pennings/CCS811 .
 
 Make sure the Sensor is wired in the follwing way: 
 
